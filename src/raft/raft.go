@@ -18,14 +18,14 @@ package raft
 //
 
 import (
-	"math/rand"
+	//	"bytes"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
 )
+
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -50,42 +50,24 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-type RaftState int
-
-const (
-	Leader RaftState = iota
-	Candidate
-	Follower
-)
-
+//
+// A Go object implementing a single Raft peer.
+//
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // raft的id，peers中下标
+	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
-	state       RaftState //当前节点状态
-	currentTerm int       //当前任期
-	voteFor     int       //当前任期接收的候选者id
-	entries     []Entry   //日志
+	// Look at the paper's Figure 2 for a description of what
+	// state a Raft server must maintain.
 
-	deadLine time.Time //超时时间
-
-	commitIndex int //将要进行提交
-	lastApplied int //已经被提交的最后一个log
-
-	//leader维护部分
-	nextIndex  []int //维护每一个server的下一个日志编号
-	matchIndex []int
 }
 
-//
-//  @Description:
-//  @return int 任期
-//  @return bool 是否是leader
-//
+// return currentTerm and whether this server
+// believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
 	var term int
@@ -99,7 +81,7 @@ func (rf *Raft) GetState() (int, bool) {
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 //
-func (rf *Raft) persist() { //持久化，log应用到状态机
+func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
 	// w := new(bytes.Buffer)
@@ -109,6 +91,7 @@ func (rf *Raft) persist() { //持久化，log应用到状态机
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 }
+
 
 //
 // restore previously persisted state.
@@ -132,6 +115,7 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
+
 //
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
@@ -152,18 +136,21 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 }
 
+
+//
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+//
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogItem  int
 }
 
+//
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+//
 type RequestVoteReply struct {
 	// Your data here (2A).
-	Term        int
-	VoteGranted bool //是否为candidate投票
 }
 
 //
@@ -207,32 +194,20 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-type Entry struct {
-}
-
-type AppendEntriesArgs struct {
-	Term         int
-	LeaderId     int
-	PrevLogIndex int
-	PrevLogTerm  int
-	Entries      []Entry
-	LeaderCommit int
-}
-
-type AppendEntriesReply struct {
-	Term   int
-	Sucess bool // if follower contained entry matching prevlogindex and term
-}
-
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-
-}
 
 //
-//  @Description: 接收客户端的命令
-//  @return int log的下表，指向刚加入log
-//  @return int 当前任期
-//  @return bool 是否是leader
+// the service using Raft (e.g. a k/v server) wants to start
+// agreement on the next command to be appended to Raft's log. if this
+// server isn't the leader, returns false. otherwise start the
+// agreement and return immediately. there is no guarantee that this
+// command will ever be committed to the Raft log, since the leader
+// may fail or lose an election. even if the Raft instance has been killed,
+// this function should return gracefully.
+//
+// the first return value is the index that the command will appear at
+// if it's ever committed. the second return value is the current
+// term. the third return value is true if this server believes it is
+// the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
@@ -240,6 +215,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
+
+
 	return index, term, isLeader
 }
 
@@ -264,49 +241,16 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-//
-//  @Description:
-//  leader需要向外发送heartbeat，follower检测是否需要进入leader竞选
-//
+// The ticker go routine starts a new election if this peer hasn't received
+// heartsbeats recently.
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
-		//TODO 这个睡眠时间的确定？
-		time.Sleep(100 * time.Millisecond)
-		if rf.state == Leader { //发送心跳信息
-			rpl := &AppendEntriesReply{}
-			args := &AppendEntriesArgs{
-				Term: rf.currentTerm,
-			}
-			//论文提及，我们使用AppendEntries进行心跳的传递，当传递一个空条目的时候就认为这是一个心跳信息
-			//传入args的entries是空的
-			rf.AppendEntries(args, rpl)
-		}
-		if time.Now().After(rf.deadLine) {
-			rf.leaderElection()
-		}
+
+		// Your code here to check if a leader election should
+		// be started and to randomize sleeping time using
+		// time.Sleep().
 
 	}
-}
-
-//
-//  开启新的leader election
-//
-func (rf *Raft) leaderElection() {
-	DPrintf("rfid:%v发起选举", rf.me)
-	rf.currentTerm++
-	rf.state = Candidate
-	rf.voteFor = rf.me
-	rf.resetDeadline()
-	//TODO
-}
-
-//随机设置超时时间，[150-300]ms
-func (rf *Raft) resetDeadline() {
-	rand.Seed(time.Now().UnixNano())
-	dur := rand.Int63n(150) + 150
-	rf.deadLine = time.Now().Add(time.Duration(dur) * time.Millisecond)
-
-	DPrintf("重制rfID %v 时间dur：%v", rf.me, dur)
 }
 
 //
@@ -328,14 +272,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-	rf.state = Follower
-	rf.currentTerm = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
 
 	return rf
 }
