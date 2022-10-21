@@ -452,7 +452,7 @@ func (cfg *config) checkOneLeader() int {
 				lastTermWithLeader = term
 			}
 		}
-
+		//DPrintf("len(leaders) is %v", len(leaders))
 		if len(leaders) != 0 {
 			return leaders[lastTermWithLeader][0]
 		}
