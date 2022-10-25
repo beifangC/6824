@@ -51,7 +51,7 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-//there states of server
+//thre e states of server
 type RaftState int
 
 const (
@@ -61,8 +61,8 @@ const (
 )
 
 type Entry struct {
-	Index   int
-	Term    int
+	Index   int // identify its position in the log
+	Term    int //
 	Command interface{}
 }
 
@@ -80,16 +80,16 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	currentTerm int
-	voteFor     int //什么时机清零？
+	voteFor     int
 	log         []Entry
 	timeout     time.Time //超时的时间
 	state       RaftState
 
-	commitIndex int
+	commitIndex int //highest index of committed log
 	lastApplied int
 
-	nextIndex  []int
-	matchIndex []int
+	nextIndex  []int //Assumed matching items
+	matchIndex []int //realy matching items
 
 	//recHeart bool
 }
@@ -105,7 +105,7 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 // return last log
-func (rf Raft) getLastLog() Entry {
+func (rf *Raft) getLastLog() Entry {
 	l := len(rf.log)
 	return rf.log[l-1]
 }
@@ -213,7 +213,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	llog := rf.getLastLog()
 	//DPrintf(" rf is %v ,candidate send args is %v ，rf.voterfor is %v", llog, args, rf.voteFor)
-	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && (args.Term > llog.Term || args.LastLogIndex >= llog.Index) {
+	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && (args.Term > llog.Term || args.LastLogTerm >= llog.Index) {
 		//DPrintf("%v vote for candidate %v", rf.me, args.CandidateId)
 		rf.voteFor = args.CandidateId
 		reply.VoteGranted = true
@@ -251,7 +251,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -288,6 +287,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	reply.Term = rf.currentTerm
 
+	if args.Entries != nil {
+		//这是一个追加消息的推送
+
+	}
+
 }
 
 // send AppendEntries RPC
@@ -311,12 +315,18 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+
+	// Your code here (2B).
 	index := -1
 	term := -1
-	isLeader := true
-	// Your code here (2B).
-
-	return index, term, isLeader
+	isLeader := false
+	if rf.state != Leader {
+		return index, term, isLeader
+	}
+	index = len(rf.log)
+	term = rf.currentTerm
+	rf.log = append(rf.log, Entry{Term: term, Command: command})
+	return index, term, rf.state == Leader
 }
 
 //
@@ -353,21 +363,21 @@ func (rf *Raft) ticker() {
 			time.Sleep(150 * time.Millisecond)
 			continue
 		}
-		// heartbeats interval is 150ms
+		// in paper, broadcast time may range 0.5ms to 20ms,depending on storage technology
+		// heartbeats interval is 100ms
 		var dura time.Duration
-		//150ms heartbeat，每隔150ms检测一次
 
 		if time.Now().After(rf.timeout) {
-			DPrintf("rf is killed  %v", rf.dead)
-			DPrintf("rf %v start leader election", rf.me)
+
+			//DPrintf("rf %v start leader election", rf.me)
 			rf.leaderElection()
 			continue
 		}
-		//修改时间sleep时间使得最后超时马上响应，而不是凑够heartbeat的倍数
-		if rf.timeout.Sub(time.Now()) < 150*time.Millisecond {
+		//修改时间sleep时间使得最后超时马上响应，而不是heartbeat的倍数
+		if rf.timeout.Sub(time.Now()) < 100*time.Millisecond {
 			dura = rf.timeout.Sub(time.Now())
 		} else {
-			dura = 150 * time.Millisecond
+			dura = 100 * time.Millisecond
 		}
 		time.Sleep(dura)
 	}
@@ -398,8 +408,6 @@ func (rf *Raft) resetTimeout() {
 	rf.timeout = time.Now().Add(time.Duration(dura) * time.Millisecond)
 }
 
-var g sync.WaitGroup
-
 //广播RequsetVote，并处理结果
 func (rf *Raft) broadcastRequsetVote() {
 	if rf.killed() == true || rf.state != Candidate {
@@ -411,7 +419,7 @@ func (rf *Raft) broadcastRequsetVote() {
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
-		LastLogIndex: llog.Index,
+		LastLogIndex: len(rf.log),
 		LastLogTerm:  llog.Term,
 	}
 
@@ -440,7 +448,7 @@ func (rf *Raft) broadcastRequsetVote() {
 				//receive majority
 				if count > len(rf.peers)/2 {
 					DPrintf("%v is become leader", rf.me)
-					rf.state = Leader
+					rf.convertLeader()
 					go rf.broadcastHeartBeat()
 				}
 			}
@@ -451,9 +459,19 @@ func (rf *Raft) broadcastRequsetVote() {
 	//DPrintf("rf %v  get %v vote of %v", rf.me, count, len(rf.peers))
 }
 
+//转为leader
+func (rf *Raft) convertLeader() {
+	rf.state = Leader
+	for i := range rf.peers {
+		//initialized to leader last log index+1
+		rf.nextIndex[i] = len(rf.log)
+	}
+
+}
+
 //发起心跳广播
 func (rf *Raft) broadcastHeartBeat() {
-	for rf.killed() == false && rf.state == Leader {
+	for !rf.killed() && rf.state == Leader {
 		args := AppendEntriesArgs{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
@@ -499,13 +517,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.voteFor = -1 // vote for no one
 	rf.state = Follower
-	rf.commitIndex = -1
+	rf.commitIndex = 0
 	rf.lastApplied = -1
 	rf.nextIndex = make([]int, len(rf.peers))
-	rf.matchIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers)) //initialized to 0
 	rf.resetTimeout()
 	//添加一条空日志，否则刚启动的时候getLastLog会越界
-	rf.log = []Entry{Entry{
+	rf.log = []Entry{{
 		Index:   0,
 		Term:    0,
 		Command: nil,
