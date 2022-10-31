@@ -94,6 +94,8 @@ type Raft struct {
 	matchIndex []int //realy matching items
 
 	//recHeart bool
+
+	applyCh chan ApplyMsg //test 2b
 }
 
 // return currentTerm and whether this server
@@ -285,16 +287,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	rf.resetTimeout()
 
-	if len(args.Entries) == 0 {
-		reply.Success = true
-		return
-	}
 	//if recetive term >currentTerm
 	if rf.currentTerm < args.Term {
 		//DPrintf("rf %v convert to follower", rf.me)
 		rf.convertFollower()
 		rf.currentTerm = args.Term
 	}
+
+	// heartbeats,doesn't need care about log recliption
+	if len(args.Entries) == 0 {
+		reply.Success = true
+		return
+	}
+
 	//本地日志缺少
 	if len(rf.log) < args.PrevLogIndex {
 		DPrintf("log missing len(log): %v prevlogindex:%v", len(rf.log), args.PrevLogIndex)
@@ -369,6 +374,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 
 	index = len(rf.log)
+	DPrintf("index:%v", index)
 	term = rf.currentTerm
 	rf.log = append(rf.log, Entry{Term: term, Command: command, Index: index})
 
@@ -407,7 +413,7 @@ func (rf *Raft) ticker() {
 
 		//成为leader之后不需要检测超时信息
 		if rf.state == Leader {
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		// in paper, broadcast time may range 0.5ms to 20ms,depending on storage technology
@@ -575,22 +581,24 @@ func (rf *Raft) broadcastHeartBeat() {
 				}
 			}(i)
 		}
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 }
 
 //追加日志
 func (rf *Raft) applyLog() {
+	DPrintf("rf[%v]commitindex:%v,lastApplied:%v", rf.me, rf.commitIndex, rf.lastApplied)
 	for rf.commitIndex > rf.lastApplied {
 		rf.lastApplied += 1
-		//entry := rf.log[rf.lastApplied]
-		// msg := ApplyMsg{
-		// 	CommandValid: true,
-		// 	Command:      entry.Command,
-		// 	CommandIndex: entry.Index,
-		// }
-
+		entry := rf.log[rf.lastApplied]
+		msg := ApplyMsg{
+			CommandValid: true,
+			Command:      entry.Command,
+			CommandIndex: entry.Index,
+		}
+		DPrintf("applyCh")
+		rf.applyCh <- msg
 	}
 }
 
@@ -623,8 +631,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.voteFor = -1 // vote for no one
 	rf.state = Follower
-	rf.commitIndex = 0
-	rf.lastApplied = 0
+	rf.commitIndex = -1
+	rf.lastApplied = -1
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers)) //initialized to 0
 	rf.log = make([]Entry, 0)
@@ -633,6 +641,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// 	Term:    0,
 	// 	Command: nil,
 	// })
+	rf.applyCh = make(chan ApplyMsg)
 	rf.resetTimeout()
 
 	// initialize from state persisted before a crash
@@ -646,8 +655,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) peintlog() {
 	for !rf.killed() {
-		DPrintf("rf[%v] log: %v", rf.me, rf.log)
-		time.Sleep(3 * time.Second)
+		DPrintf("rf[%v] commitindex:%v log: %v", rf.me, rf.commitIndex, rf.log)
+		time.Sleep(1 * time.Second)
 	}
 
 }
