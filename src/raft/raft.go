@@ -202,23 +202,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	//if term > currentTerm,set currentTerm = term,convert to follower
-	if args.Term > rf.currentTerm {
-		// DPrintf("rf[%v] convert to follower", rf.me)
-		rf.state = Follower
-		rf.currentTerm = args.Term
-		rf.voteFor = -1
-		rf.resetTimeout()
-	}
-
 	//当前任期更新，拒绝投票
 	if rf.currentTerm > args.Term {
 		return
 	}
 
+	rf.resetTimeout()
+	//if term > currentTerm,set currentTerm = term,convert to follower
+	if args.Term > rf.currentTerm {
+		// DPrintf("rf[%v] convert to follower", rf.me)
+
+		rf.currentTerm = args.Term
+		rf.convertFollower()
+
+	}
+
 	llog := rf.getLastLog()
 	//DPrintf("args:%v,rf[%v] term:%v", args.LastLogTerm, rf.me, rf.currentTerm)
-	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && (args.Term > llog.Term || args.LastLogIndex >= llog.Index) {
+	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && (args.Term > llog.Term || (llog.Term == args.LastLogTerm && args.LastLogIndex > llog.Index)) {
 		// DPrintf("%v vote for candidate %v", rf.me, args.CandidateId)
 		rf.voteFor = args.CandidateId
 		reply.VoteGranted = true
@@ -290,15 +291,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//if recetive term >currentTerm
 	if rf.currentTerm < args.Term {
 		//DPrintf("rf %v convert to follower", rf.me)
-		rf.convertFollower()
 		rf.currentTerm = args.Term
+		rf.convertFollower()
 	}
 
 	// heartbeats,doesn't need care about log recliption
-	if len(args.Entries) == 0 {
-		reply.Success = true
-		return
-	}
+	//if len(args.Entries) == 0 {
+	// reply.Success = true
+	//	return
+	//}
 
 	//本地日志缺少
 	if len(rf.log) < args.PrevLogIndex {
@@ -328,15 +329,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//DPrintf(" raft %v log replication", rf.me)
 
 	//更新commitdex
-
 	if args.LedaerCommit > rf.commitIndex {
-		DPrintf("leadercommit:%v", args.LedaerCommit)
+		//DPrintf("leadercommit:%v", args.LedaerCommit)
 		rf.commitIndex = args.LedaerCommit
 		if rf.commitIndex > len(rf.log)-1 {
 			rf.commitIndex = len(rf.log) - 1
 		}
 		//DPrintf("update commitindex %v", rf.commitIndex)
 	}
+
+	go rf.applyLog()
+
 	reply.Success = true
 }
 
@@ -374,7 +377,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 
 	index = len(rf.log)
-	DPrintf("index:%v", index)
+
 	term = rf.currentTerm
 	rf.log = append(rf.log, Entry{Term: term, Command: command, Index: index})
 
@@ -413,7 +416,7 @@ func (rf *Raft) ticker() {
 
 		//成为leader之后不需要检测超时信息
 		if rf.state == Leader {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond)
 			continue
 		}
 		// in paper, broadcast time may range 0.5ms to 20ms,depending on storage technology
@@ -425,10 +428,10 @@ func (rf *Raft) ticker() {
 			continue
 		}
 		//修改时间sleep时间使得最后超时马上响应，而不是heartbeat的倍数
-		if rf.timeout.Sub(time.Now()) < 100*time.Millisecond {
+		if rf.timeout.Sub(time.Now()) < 150*time.Millisecond {
 			dura = rf.timeout.Sub(time.Now())
 		} else {
-			dura = 100 * time.Millisecond
+			dura = 150 * time.Millisecond
 		}
 
 		time.Sleep(dura)
@@ -437,7 +440,7 @@ func (rf *Raft) ticker() {
 
 //start leader election phase
 func (rf *Raft) leaderElection() {
-	// DPrintf("rf[%v] start leader election", rf.me)
+	DPrintf("rf[%v] start leader election", rf.me)
 	if rf.killed() == true {
 		return
 	}
@@ -454,6 +457,7 @@ func (rf *Raft) leaderElection() {
 
 //reset the time
 func (rf *Raft) resetTimeout() {
+
 	rand.Seed(time.Now().UnixMicro())
 	//随机200-350ms
 	dura := rand.Int63n(200) + 300
@@ -500,7 +504,7 @@ func (rf *Raft) broadcastRequsetVote() {
 				count++
 				//receive majority
 				if count > len(rf.peers)/2 {
-
+					//make sure only run once
 					once.Do(func() {
 						rf.convertLeader()
 						rf.broadcastHeartBeat()
@@ -513,9 +517,8 @@ func (rf *Raft) broadcastRequsetVote() {
 	//DPrintf("rf %v  get %v vote of %v", rf.me, count, len(rf.peers))
 }
 
-//转为leader
 func (rf *Raft) convertLeader() {
-	DPrintf("%v convert to leader", rf.me)
+	DPrintf("rf[%v] convert to leader", rf.me)
 	rf.state = Leader
 	for i := range rf.peers {
 		//initialized to leader last log index+1
@@ -527,18 +530,18 @@ func (rf *Raft) convertFollower() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.state = Follower
+	rf.voteFor = -1
 }
 
 //发起心跳广播
 func (rf *Raft) broadcastHeartBeat() {
-	DPrintf("开启心跳")
+	DPrintf("rf[%v] start heartbeats", rf.me)
 	for !rf.killed() && rf.state == Leader {
 		for i := range rf.peers {
 			//跳过自己
 			if i == rf.me {
 				continue
 			}
-
 			go func(i int) {
 				reply := AppendEntriesReply{}
 				args := AppendEntriesArgs{
@@ -548,32 +551,46 @@ func (rf *Raft) broadcastHeartBeat() {
 					LedaerCommit: rf.commitIndex,
 					Entries:      make([]Entry, 0),
 				}
-				// DPrintf("nextIndex[%v]:%v", i, rf.nextIndex[i])
+				//DPrintf("nextIndex[%v]:%v", i, rf.nextIndex[i])
 				if args.PrevLogIndex >= 0 {
 					args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
 				}
 				if rf.nextIndex[i] >= 0 {
 					args.Entries = append(args.Entries, rf.log[rf.nextIndex[i]:]...)
 				}
+
+				DPrintf("sendappend to rf[%v] Entries :%v", i, len(args.Entries))
 				//send RPC
 				f := rf.sendAppendEntries(i, &args, &reply)
-				//results
-				if f && reply.Term > rf.currentTerm {
+				//链接失败
+				if !f {
+					return
+				}
+
+				if reply.Term > rf.currentTerm {
 					rf.convertFollower()
 					return
 				}
+				//发送的是心跳，接下来的返回消息可以不用处理
+				if len(args.Entries) == 0 {
+					return
+				}
+
 				// sync success
-				if f && reply.Success {
+				if reply.Success {
 					rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
 					rf.nextIndex[i] = rf.matchIndex[i] + 1
 					//更新commiindex
 					arr := make([]int, len(rf.matchIndex))
 					copy(arr, rf.matchIndex)
+					//添加leader节点的
+					arr[rf.me] = len(rf.log) - 1
 					sort.Ints(arr)
 					newCIndex := arr[len(rf.peers)/2]
-					if newCIndex > rf.commitIndex {
+					if rf.state == Leader && rf.log[newCIndex].Term == rf.currentTerm && newCIndex > rf.commitIndex {
 						rf.commitIndex = newCIndex
-						rf.applyLog()
+						DPrintf("leader commit index update:%v", newCIndex)
+						go rf.applyLog()
 					}
 
 				} else { //sync fail
@@ -588,16 +605,23 @@ func (rf *Raft) broadcastHeartBeat() {
 
 //追加日志
 func (rf *Raft) applyLog() {
-	DPrintf("rf[%v]commitindex:%v,lastApplied:%v", rf.me, rf.commitIndex, rf.lastApplied)
+	if len(rf.log) == 0 {
+		//DPrintf("rf[%v] len==0 return", rf.me)
+		return
+	}
+
+	//DPrintf("rf[%v]commitindex:%v,lastApplied:%v", rf.me, rf.commitIndex, rf.lastApplied)
+	//DPrintf("rf[%v]commit log", rf.me)
 	for rf.commitIndex > rf.lastApplied {
-		rf.lastApplied += 1
+		rf.lastApplied++
 		entry := rf.log[rf.lastApplied]
 		msg := ApplyMsg{
 			CommandValid: true,
 			Command:      entry.Command,
 			CommandIndex: entry.Index,
 		}
-		DPrintf("applyCh")
+		//DPrintf("rf.nextIndex[]:%v", rf.nextIndex)
+
 		rf.applyCh <- msg
 	}
 }
@@ -641,7 +665,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// 	Term:    0,
 	// 	Command: nil,
 	// })
-	rf.applyCh = make(chan ApplyMsg)
+	rf.applyCh = applyCh //这个chan从参数传过来的
 	rf.resetTimeout()
 
 	// initialize from state persisted before a crash
@@ -658,5 +682,4 @@ func (rf *Raft) peintlog() {
 		DPrintf("rf[%v] commitindex:%v log: %v", rf.me, rf.commitIndex, rf.log)
 		time.Sleep(1 * time.Second)
 	}
-
 }
