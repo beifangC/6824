@@ -123,6 +123,8 @@ func TestManyElections2A(t *testing.T) {
 	cfg.end()
 }
 
+// 实现的时候日志从0开始
+// 原检测从1开始，修改为0开始 2022年11月5日
 func TestBasicAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -131,7 +133,8 @@ func TestBasicAgree2B(t *testing.T) {
 	cfg.begin("Test (2B): basic agreement")
 
 	iters := 3
-	for index := 1; index < iters+1; index++ {
+	//origin：index:=1；index< iters+1
+	for index := 0; index < iters; index++ {
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
@@ -162,7 +165,8 @@ func TestRPCBytes2B(t *testing.T) {
 
 	iters := 10
 	var sent int64 = 0
-	for index := 2; index < iters+2; index++ {
+	// dec 1
+	for index := 1; index < iters+1; index++ {
 		cmd := randstring(5000)
 		xindex := cfg.one(cmd, servers, false)
 		if xindex != index {
@@ -285,6 +289,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
+	DPrintf("rf[%v] connection was killed", (leader+1)%servers)
 	cfg.disconnect((leader + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -296,6 +301,7 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.one(105, servers-1, false)
 
 	// re-connect
+	DPrintf("rf[%v] re-connect", (leader+1)%servers)
 	cfg.connect((leader + 1) % servers)
 
 	// the full set of servers should preserve
