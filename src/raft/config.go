@@ -153,6 +153,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 		}
 	}
 	_, prevok := cfg.logs[i][m.CommandIndex-1]
+
 	cfg.logs[i][m.CommandIndex] = v
 	if m.CommandIndex > cfg.maxIndex {
 		cfg.maxIndex = m.CommandIndex
@@ -163,6 +164,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 // applier reads message from apply ch and checks that they match the log
 // contents
 func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
+
 	for m := range applyCh {
 		if m.CommandValid == false {
 			// ignore other types of ApplyMsg
@@ -214,6 +216,7 @@ const SnapShotInterval = 10
 
 // periodically snapshot raft state
 func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
+	DPrintf("snap applier is running")
 	cfg.mu.Lock()
 	rf := cfg.rafts[i]
 	cfg.mu.Unlock()
@@ -604,12 +607,14 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				time.Sleep(20 * time.Millisecond)
 			}
 			if retry == false {
+				DPrintf("cfg.log:%v", cfg.logs)
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
+
 	if cfg.checkFinished() == false {
 		cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 	}
