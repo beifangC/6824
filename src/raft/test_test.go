@@ -60,19 +60,26 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
+
 	cfg.disconnect(leader1)
+	DPrintf("rf[%v] was killed", leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
+
 	cfg.connect(leader1)
+	DPrintf("rf[%v] was re-connect", leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
+	DPrintf("rf[%v] was killed", leader2)
+	DPrintf("rf[%v] was killed", (leader2+1)%servers)
+
 	time.Sleep(2 * RaftElectionTimeout)
 
 	// check that the one connected server
@@ -81,10 +88,12 @@ func TestReElection2A(t *testing.T) {
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
+	DPrintf("rf[%v] was re-connect", (leader2+1)%servers)
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
+	DPrintf("rf[%v] was re-connect", leader2)
 	cfg.checkOneLeader()
 
 	cfg.end()
@@ -314,6 +323,7 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.end()
 }
 
+// nation: the index start with 0
 func TestFailNoAgree2B(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, false, false)
@@ -325,6 +335,7 @@ func TestFailNoAgree2B(t *testing.T) {
 
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
+	DPrintf("3 rf's connection was killed")
 	cfg.disconnect((leader + 1) % servers)
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
@@ -333,8 +344,8 @@ func TestFailNoAgree2B(t *testing.T) {
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
 	}
-	if index != 2 {
-		t.Fatalf("expected index 2, got %v", index)
+	if index != 1 {
+		t.Fatalf("expected index 1, got %v", index)
 	}
 
 	time.Sleep(2 * RaftElectionTimeout)
@@ -348,7 +359,7 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.connect((leader + 1) % servers)
 	cfg.connect((leader + 2) % servers)
 	cfg.connect((leader + 3) % servers)
-
+	DPrintf("3 rf re-connect")
 	// the disconnected majority may have chosen a leader from
 	// among their own ranks, forgetting index 2.
 	leader2 := cfg.checkOneLeader()
@@ -356,7 +367,7 @@ func TestFailNoAgree2B(t *testing.T) {
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
 	}
-	if index2 < 2 || index2 > 3 {
+	if index2 < 1 || index2 > 2 {
 		t.Fatalf("unexpected index %v", index2)
 	}
 

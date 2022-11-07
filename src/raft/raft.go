@@ -211,16 +211,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	//if term > currentTerm,set currentTerm = term,convert to follower
 	if args.Term > rf.currentTerm {
 		// DPrintf("rf[%v] convert to follower", rf.me)
-
 		rf.currentTerm = args.Term
 		rf.convertFollower()
-
 	}
 
 	llog := rf.getLastLog()
-	//DPrintf("args:%v,rf[%v] term:%v", args.LastLogTerm, rf.me, rf.currentTerm)
-	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && (args.Term > llog.Term || (llog.Term == args.LastLogTerm && args.LastLogIndex > llog.Index)) {
-		// DPrintf("%v vote for candidate %v", rf.me, args.CandidateId)
+	//DPrintf("args term:%v index:%v,lastlog[%v] term:%v index:%v", args.LastLogTerm, args.LastLogIndex, rf.me, llog.Term, llog.Index)
+	flag := args.LastLogTerm > llog.Term || (llog.Term == args.LastLogTerm && args.LastLogIndex >= llog.Index)
+	//DPrintf("flag:%v", flag)
+	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && flag {
+		//DPrintf("%v vote for candidate rf[%v]", rf.me, args.CandidateId)
 		rf.voteFor = args.CandidateId
 		reply.VoteGranted = true
 	}
@@ -302,7 +302,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//}
 
 	//本地日志缺少
-	if len(rf.log) < args.PrevLogIndex {
+	if len(rf.log)-1 < args.PrevLogIndex {
 		DPrintf("log missing len(log): %v prevlogindex:%v", len(rf.log), args.PrevLogIndex)
 		return
 	}
@@ -425,6 +425,7 @@ func (rf *Raft) ticker() {
 
 		if time.Now().After(rf.timeout) {
 			rf.leaderElection()
+
 			continue
 		}
 		//修改时间sleep时间使得最后超时马上响应，而不是heartbeat的倍数
@@ -457,11 +458,10 @@ func (rf *Raft) leaderElection() {
 
 //reset the time
 func (rf *Raft) resetTimeout() {
-
-	rand.Seed(time.Now().UnixMicro())
-	//随机200-350ms
+	//随机300-500ms
 	dura := rand.Int63n(200) + 300
 	rf.timeout = time.Now().Add(time.Duration(dura) * time.Millisecond)
+	//DPrintf("rf[%v] reset timeout:%v", rf.me, dura)
 }
 
 //广播RequsetVote，并处理结果
@@ -495,8 +495,12 @@ func (rf *Raft) broadcastRequsetVote() {
 			f := rf.sendRequestVote(i, &args, &reply)
 			//处理返回结果
 			//任期不是最新的，变为folloer
-			if f && reply.Term > rf.currentTerm {
-				rf.state = Follower
+			if !f {
+				return
+			}
+			if reply.Term > rf.currentTerm {
+				rf.currentTerm = reply.Term
+				rf.convertFollower()
 				rf.resetTimeout()
 			}
 			//的到投票
@@ -529,6 +533,7 @@ func (rf *Raft) convertLeader() {
 func (rf *Raft) convertFollower() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
 	rf.state = Follower
 	rf.voteFor = -1
 }
@@ -559,7 +564,7 @@ func (rf *Raft) broadcastHeartBeat() {
 					args.Entries = append(args.Entries, rf.log[rf.nextIndex[i]:]...)
 				}
 
-				DPrintf("sendappend to rf[%v] Entries :%v", i, len(args.Entries))
+				//DPrintf("sendappend to rf[%v] Entries :%v", i, len(args.Entries))
 				//send RPC
 				f := rf.sendAppendEntries(i, &args, &reply)
 				//链接失败
@@ -568,6 +573,7 @@ func (rf *Raft) broadcastHeartBeat() {
 				}
 
 				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term
 					rf.convertFollower()
 					return
 				}
@@ -594,7 +600,7 @@ func (rf *Raft) broadcastHeartBeat() {
 					}
 
 				} else { //sync fail
-					rf.nextIndex[i] = args.PrevLogIndex
+					rf.nextIndex[i]--
 				}
 			}(i)
 		}
@@ -674,6 +680,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.peintlog()
+	rand.Seed(time.Now().UnixMicro())
 	return rf
 }
 
