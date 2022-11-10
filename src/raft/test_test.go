@@ -8,12 +8,14 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -132,8 +134,6 @@ func TestManyElections2A(t *testing.T) {
 	cfg.end()
 }
 
-// 实现的时候日志从0开始
-// 原检测从1开始，修改为0开始 2022年11月5日
 func TestBasicAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -143,7 +143,7 @@ func TestBasicAgree2B(t *testing.T) {
 
 	iters := 3
 	//origin：index:=1；index< iters+1
-	for index := 0; index < iters; index++ {
+	for index := 1; index < iters+1; index++ {
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
@@ -174,8 +174,8 @@ func TestRPCBytes2B(t *testing.T) {
 
 	iters := 10
 	var sent int64 = 0
-	// dec 1
-	for index := 1; index < iters+1; index++ {
+
+	for index := 2; index < iters+2; index++ {
 		cmd := randstring(5000)
 		xindex := cfg.one(cmd, servers, false)
 		if xindex != index {
@@ -344,8 +344,8 @@ func TestFailNoAgree2B(t *testing.T) {
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
 	}
-	if index != 1 {
-		t.Fatalf("expected index 1, got %v", index)
+	if index != 2 {
+		t.Fatalf("expected index 2, got %v", index)
 	}
 
 	time.Sleep(2 * RaftElectionTimeout)
@@ -367,7 +367,7 @@ func TestFailNoAgree2B(t *testing.T) {
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
 	}
-	if index2 < 1 || index2 > 2 {
+	if index2 < 2 || index2 > 3 {
 		t.Fatalf("unexpected index %v", index2)
 	}
 

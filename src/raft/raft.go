@@ -21,12 +21,12 @@ import (
 	"math/rand"
 	"sort"
 
-	//	"bytes"
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -122,13 +122,15 @@ func (rf *Raft) getLastLog() Entry {
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
+	// persistent : currentTerm voteFor log
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.voteFor)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -140,17 +142,13 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	d.Decode(&rf.currentTerm)
+	d.Decode(&rf.voteFor)
+	d.Decode(&rf.log)
 }
 
 //
@@ -225,6 +223,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 	}
 
+	rf.persist()
 }
 
 //
@@ -341,6 +340,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	go rf.applyLog()
 
 	reply.Success = true
+
+	rf.persist()
 }
 
 // send AppendEntries RPC
@@ -528,6 +529,7 @@ func (rf *Raft) convertLeader() {
 		//initialized to leader last log index+1
 		rf.nextIndex[i] = len(rf.log)
 	}
+	rf.persist()
 }
 
 func (rf *Raft) convertFollower() {
@@ -536,6 +538,7 @@ func (rf *Raft) convertFollower() {
 
 	rf.state = Follower
 	rf.voteFor = -1
+	rf.persist()
 }
 
 //发起心跳广播
@@ -609,7 +612,7 @@ func (rf *Raft) broadcastHeartBeat() {
 
 }
 
-//追加日志
+//提交日志
 func (rf *Raft) applyLog() {
 	if len(rf.log) == 0 {
 		//DPrintf("rf[%v] len==0 return", rf.me)
@@ -666,11 +669,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers)) //initialized to 0
 	rf.log = make([]Entry, 0)
-	// rf.log = append(rf.log, Entry{
-	// 	Index:   0,
-	// 	Term:    0,
-	// 	Command: nil,
-	// })
+
+	rf.log = append(rf.log, Entry{
+		Index:   0,
+		Term:    0,
+		Command: nil,
+	})
 	rf.applyCh = applyCh //这个chan从参数传过来的
 	rf.resetTimeout()
 
@@ -684,6 +688,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	return rf
 }
 
+//for test
 func (rf *Raft) peintlog() {
 	for !rf.killed() {
 		DPrintf("rf[%v] commitindex:%v log: %v", rf.me, rf.commitIndex, rf.log)
