@@ -806,11 +806,12 @@ func TestPersist32C(t *testing.T) {
 	cfg.crash1((leader + 0) % servers)
 	cfg.crash1((leader + 1) % servers)
 	cfg.connect((leader + 2) % servers)
+	DPrintf("restart 0")
 	cfg.start1((leader+0)%servers, cfg.applier)
 	cfg.connect((leader + 0) % servers)
 
 	cfg.one(103, 2, true)
-
+	DPrintf("restart 1")
 	cfg.start1((leader+1)%servers, cfg.applier)
 	cfg.connect((leader + 1) % servers)
 
