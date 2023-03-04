@@ -555,10 +555,6 @@ func (rf *Raft) convertToLeader() {
 	rf.lastBroadcastTime = time.Unix(0, 0) // 令appendEntries广播立即执行
 }
 
-func (rf *Raft) convertToCanditate() {
-
-}
-
 // 最后的index
 func (rf *Raft) lastIndex() int {
 	return rf.lastIncludedIndex + len(rf.log)
@@ -624,40 +620,28 @@ func (rf *Raft) appendEntries(peerId int) {
 	// 如果prevLogIndex是leader快照的最后1条log, 那么取快照的最后1个term
 	if args.PrevLogIndex == rf.lastIncludedIndex {
 		args.PrevLogTerm = rf.lastIncludedTerm
-	} else { // 否则一定是log部分
+	} else {
 		args.PrevLogTerm = rf.log[rf.index2LogPos(args.PrevLogIndex)].Term
 	}
 	args.Entries = append(args.Entries, rf.log[rf.index2LogPos(args.PrevLogIndex+1):]...)
 
-	DPrintf("RaftNode[%d] appendEntries starts,  currentTerm[%d] peer[%d] logIndex=[%d] nextIndex[%d] matchIndex[%d] args.Entries[%d] commitIndex[%d]",
-		rf.me, rf.currentTerm, peerId, rf.lastIndex(), rf.nextIndex[peerId], rf.matchIndex[peerId], len(args.Entries), rf.commitIndex)
-
 	go func() {
-		// DPrintf("RaftNode[%d] appendEntries starts, myTerm[%d] peerId[%d]", rf.me, args1.Term, id)
 		reply := AppendEntriesReply{}
 		if ok := rf.sendAppendEntries(peerId, &args, &reply); ok {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
-			defer func() {
-				DPrintf("RaftNode[%d] appendEntries ends,  currentTerm[%d]  peer[%d] logIndex=[%d] nextIndex[%d] matchIndex[%d] commitIndex[%d]",
-					rf.me, rf.currentTerm, peerId, rf.lastIndex(), rf.nextIndex[peerId], rf.matchIndex[peerId], rf.commitIndex)
-			}()
-
-			// 如果不是rpc前的leader状态了，那么啥也别做了
+			// 状态改变
 			if rf.currentTerm != args.Term {
 				return
 			}
 			if reply.Term > rf.currentTerm { // 变成follower
-				rf.state = Follower
+				rf.convertToFollower(reply.Term)
 				rf.leaderId = -1
-				rf.currentTerm = reply.Term
-				rf.votedFor = -1
 				rf.persist()
 				return
 			}
-			// 因为RPC期间无锁, 可能相关状态被其他RPC修改了
-			// 因此这里得根据发出RPC请求时的状态做更新，而不要直接对nextIndex和matchIndex做相对加减
+
 			if reply.Success { // 同步日志成功
 				rf.nextIndex[peerId] = args.PrevLogIndex + len(args.Entries) + 1
 				rf.matchIndex[peerId] = rf.nextIndex[peerId] - 1
@@ -692,12 +676,7 @@ func (rf *Raft) appendEntries(peerId int) {
 }
 
 func (rf *Raft) updateCommitIndex() {
-	// 数字N, 让nextIndex[i]的大多数>=N
-	// peer[0]' index=2
-	// peer[1]' index=2
-	// peer[2]' index=1
-	// 1,2,2
-	// 更新commitIndex, 就是找中位数
+	//保证commitIndex覆盖一半节点，找中位数
 	sortedMatchIndex := make([]int, 0)
 	sortedMatchIndex = append(sortedMatchIndex, rf.lastIndex())
 	for i := 0; i < len(rf.peers); i++ {
@@ -708,12 +687,12 @@ func (rf *Raft) updateCommitIndex() {
 	}
 	sort.Ints(sortedMatchIndex)
 	newCommitIndex := sortedMatchIndex[len(rf.peers)/2]
-	// 如果index属于snapshot范围，那么不要检查term了，因为snapshot的一定是集群提交的
+	// 如果index属于snapshot范围，那么不要检查term了
 	// 否则还是检查log的term是否满足条件
 	if newCommitIndex > rf.commitIndex && (newCommitIndex <= rf.lastIncludedIndex || rf.log[rf.index2LogPos(newCommitIndex)].Term == rf.currentTerm) {
 		rf.commitIndex = newCommitIndex
 	}
-	DPrintf("RaftNode[%d] updateCommitIndex, commitIndex[%d] matchIndex[%v]", rf.me, rf.commitIndex, sortedMatchIndex)
+
 }
 
 //提交日志
