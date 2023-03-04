@@ -117,7 +117,6 @@ func (rf *Raft) persist() {
 	// persistent : currentTerm voteFor log
 	// Example:
 
-	// DPrintf("rf[%v] persist { cur:%v votefor:%v log:%v}", rf.me, rf.currentTerm, rf.voteFor, rf.log)
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
@@ -274,7 +273,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	//日志term不匹配
 	if args.PrevLogIndex > 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		DPrintf("term not fit")
+
 		reply.Success = false
 		return
 	}
@@ -472,8 +471,7 @@ func (rf *Raft) broadcastRequestVote() {
 	args.LastLogTerm = rf.lastTerm()
 
 	rf.mu.Unlock()
-	DPrintf("RaftNode[%d] RequestVote starts, Term[%d] LastLogIndex[%d] LastLogTerm[%d]", rf.me, args.Term,
-		args.LastLogIndex, args.LastLogTerm)
+
 	// 并发RPC请求vote
 	voteCount := 1   // 收到投票个数（先给自己投1票）
 	finishCount := 1 // 收到应答个数
@@ -541,6 +539,7 @@ func (rf *Raft) convertToFollower(term int) {
 }
 
 func (rf *Raft) convertToLeader() {
+	DPrintf("rf[%v] convert to leader", rf.me)
 	rf.state = Leader
 	rf.leaderId = rf.me
 
@@ -555,12 +554,10 @@ func (rf *Raft) convertToLeader() {
 	rf.lastBroadcastTime = time.Unix(0, 0) // 令appendEntries广播立即执行
 }
 
-// 最后的index
 func (rf *Raft) lastIndex() int {
 	return rf.lastIncludedIndex + len(rf.log)
 }
 
-// 最后的term
 func (rf *Raft) lastTerm() (lastLogTerm int) {
 	lastLogTerm = rf.lastIncludedTerm // for snapshot
 	if len(rf.log) != 0 {
@@ -648,10 +645,8 @@ func (rf *Raft) appendEntries(peerId int) {
 				rf.updateCommitIndex() // 更新commitIndex
 			} else {
 				// 回退优化，参考：https://thesquareplanet.com/blog/students-guide-to-raft/#an-aside-on-optimizations
-				nextIndexBefore := rf.nextIndex[peerId] // 仅为打印log
-
 				if reply.ConflictTerm != -1 { // follower的prevLogIndex位置term冲突了
-					// 我们找leader log中conflictTerm最后出现位置，如果找到了就用它作为nextIndex，否则用follower的conflictIndex
+					// leader log中conflictTerm最后出现位置，如果找到了就用它作为nextIndex，否则用follower的conflictIndex
 					conflictTermIndex := -1
 					for index := args.PrevLogIndex; index > rf.lastIncludedIndex; index-- {
 						if rf.log[rf.index2LogPos(index)].Term == reply.ConflictTerm {
@@ -669,12 +664,10 @@ func (rf *Raft) appendEntries(peerId int) {
 					// 这时候我们将返回的conflictIndex设置为nextIndex即可
 					rf.nextIndex[peerId] = reply.ConflictIndex
 				}
-				DPrintf("RaftNode[%d] back-off nextIndex, peer[%d] nextIndexBefore[%d] nextIndex[%d]", rf.me, peerId, nextIndexBefore, rf.nextIndex[peerId])
 			}
 		}
 	}()
 }
-
 func (rf *Raft) updateCommitIndex() {
 	//保证commitIndex覆盖一半节点，找中位数
 	sortedMatchIndex := make([]int, 0)
@@ -688,7 +681,7 @@ func (rf *Raft) updateCommitIndex() {
 	sort.Ints(sortedMatchIndex)
 	newCommitIndex := sortedMatchIndex[len(rf.peers)/2]
 	// 如果index属于snapshot范围，那么不要检查term了
-	// 否则还是检查log的term是否满足条件
+	// 只有本term的才能被提交,figure8
 	if newCommitIndex > rf.commitIndex && (newCommitIndex <= rf.lastIncludedIndex || rf.log[rf.index2LogPos(newCommitIndex)].Term == rf.currentTerm) {
 		rf.commitIndex = newCommitIndex
 	}
