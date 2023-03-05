@@ -386,6 +386,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = rf.lastIndex()
 		}
 	}
+
+	go rf.applyLogOnce()
+
 	rf.persist()
 	reply.Success = true
 }
@@ -593,6 +596,7 @@ func (rf *Raft) convertToLeader() {
 
 	//开启广播
 	rf.lastBroadcastTime = time.Unix(0, 0)
+	go rf.broadcastHeartBeat()
 }
 
 /*
@@ -619,8 +623,6 @@ func (rf *Raft) index2LogPos(index int) int {
 //发起心跳广播
 func (rf *Raft) broadcastHeartBeat() {
 	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
-
 		func() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
@@ -649,11 +651,55 @@ func (rf *Raft) broadcastHeartBeat() {
 				} else { // 同步日志
 					rf.appendEntries(peerId)
 				}
-
 			}
+
+			go rf.applyLogOnce()
+			time.Sleep(10 * time.Millisecond)
 		}()
 	}
 }
+
+/**
+//发起心跳广播
+func (rf *Raft) broadcastHeartBeat() {
+	for !rf.killed() {
+		time.Sleep(10 * time.Millisecond)
+		func() {
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+
+			// 只有leader才能进行heartbeat
+			if rf.state != Leader {
+				return
+			}
+
+			// 广播周期100ms
+			now := time.Now()
+			if now.Sub(rf.lastBroadcastTime) < 100*time.Millisecond {
+				return
+			}
+
+			rf.lastBroadcastTime = time.Now()
+			DPrintf("rf[%v] broadcastHeartBeat", rf.me)
+			// 向所有follower发送心跳
+			for peerId := 0; peerId < len(rf.peers); peerId++ {
+				if peerId == rf.me {
+					continue
+				}
+				// nextIndex在snapshot内，同步snapshot
+				if rf.nextIndex[peerId] <= rf.lastIncludedIndex {
+					rf.doInstallSnapshot(peerId)
+				} else { // 同步日志
+					rf.appendEntries(peerId)
+				}
+			}
+
+			rf.applyLogOnce()
+
+		}()
+	}
+}
+*/
 
 // 发送日志追加
 func (rf *Raft) appendEntries(peerId int) {
@@ -747,18 +793,33 @@ func (rf *Raft) updateCommitIndex() {
 }
 
 //提交日志
-func (rf *Raft) applyLog() {
-	noMore := false
-	for !rf.killed() {
-		if noMore {
-			time.Sleep(10 * time.Millisecond)
+func (rf *Raft) applyLogOnce() {
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
+	for rf.commitIndex > rf.lastApplied {
+		//每次只提交一个
+		rf.lastApplied += 1
+		appliedIndex := rf.index2LogPos(rf.lastApplied)
+		applyMsg := ApplyMsg{
+			CommandValid: true,
+			Command:      rf.log[appliedIndex].Command,
+			CommandIndex: rf.lastApplied,
+			CommandTerm:  rf.log[appliedIndex].Term,
 		}
+		rf.applyCh <- applyMsg
+	}
+}
+
+/*
+//提交日志
+func (rf *Raft) applyLog() {
+	for !rf.killed() {
+		time.Sleep(10 * time.Millisecond)
 		func() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-
-			noMore = true
-			if rf.commitIndex > rf.lastApplied {
+			for rf.commitIndex > rf.lastApplied {
+				//每次只提交一个
 				rf.lastApplied += 1
 				appliedIndex := rf.index2LogPos(rf.lastApplied)
 				appliedMsg := ApplyMsg{
@@ -768,11 +829,11 @@ func (rf *Raft) applyLog() {
 					CommandTerm:  rf.log[appliedIndex].Term,
 				}
 				rf.applyCh <- appliedMsg
-				noMore = false
 			}
 		}()
 	}
 }
+*/
 
 //2D 快照
 type InstallSnapshotArgs struct {
@@ -804,7 +865,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if args.Term > rf.currentTerm {
 		rf.convertToFollower(args.Term)
 		rf.persist()
-
 	}
 
 	rf.leaderId = args.LeaderId
@@ -965,10 +1025,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
 	DPrintf("rf[%v] start wit activetime:%v", rf.me, rf.lastActiveTime)
 	// start ticker goroutine to start elections
 	go rf.ticker()
-	go rf.broadcastHeartBeat()
-	go rf.applyLog()
+
+	//go rf.broadcastHeartBeat()
+	//go rf.applyLog()
 	return rf
 }
