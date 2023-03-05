@@ -13,8 +13,8 @@ import "sync"
 
 type Persister struct {
 	mu        sync.Mutex
-	raftstate []byte
-	snapshot  []byte
+	raftstate []byte //
+	snapshot  []byte //
 }
 
 func MakePersister() *Persister {
@@ -27,6 +27,7 @@ func clone(orig []byte) []byte {
 	return x
 }
 
+//Copy当前Persister
 func (ps *Persister) Copy() *Persister {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
