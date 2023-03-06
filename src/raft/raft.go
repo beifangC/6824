@@ -47,8 +47,9 @@ type ApplyMsg struct {
 	CommandIndex int
 	CommandTerm  int
 
-	// 向application层安装快照
-	Snapshot          []byte
+	SnapshotValid bool
+	Snapshot      []byte //存储kv数据，请求编号，应用层来实现
+	//last Index Term单独存储
 	LastIncludedIndex int
 	LastIncludedTerm  int
 }
@@ -160,7 +161,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 }
 
 /*
-* 进行一次快照，即日志的压缩，不再维护早期的日志信息
+* 进行一次快照，即日志的压缩，不再维护早期的日志信息，snapshot是应用层传来
  */
 func (rf *Raft) Snapshot(lastIncludedIndex int, snapshot []byte) {
 	rf.mu.Lock()
@@ -761,6 +762,7 @@ func (rf *Raft) applyLogOnce() {
 		}
 		rf.applyCh <- applyMsg
 	}
+	defer DPrintf("rf[%v] applyOnce stop", rf.me)
 }
 
 /*
@@ -897,6 +899,7 @@ func (rf *Raft) installSnapshotToApplication() {
 
 	// 同步给application层的快照
 	applyMsg := &ApplyMsg{
+		SnapshotValid:     true,
 		CommandValid:      false,
 		Snapshot:          rf.persister.ReadSnapshot(),
 		LastIncludedIndex: rf.lastIncludedIndex,
