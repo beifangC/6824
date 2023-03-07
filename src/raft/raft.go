@@ -117,7 +117,7 @@ func (rf *Raft) persist() {
 	rf.persister.SaveRaftState(rf.persistDate())
 }
 
-// 字节数据
+// 返回序列化字节数据
 func (rf *Raft) persistDate() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
@@ -482,9 +482,9 @@ func (rf *Raft) ticker() {
 
 			// 请求vote
 			if rf.state == Candidate && interval >= timeout {
-				rf.lastActiveTime = now // 重置下次选举时间
-				rf.currentTerm += 1     // 发起新任期
-				rf.votedFor = rf.me     // 该任期投了自己
+				rf.lastActiveTime = now
+				rf.currentTerm += 1
+				rf.votedFor = rf.me
 				//rf.persist()
 				rf.broadcastRequestVote()
 			}
@@ -762,7 +762,6 @@ func (rf *Raft) applyLogOnce() {
 		}
 		rf.applyCh <- applyMsg
 	}
-	defer DPrintf("rf[%v] applyOnce stop", rf.me)
 }
 
 /*
@@ -911,33 +910,6 @@ func (rf *Raft) installSnapshotToApplication() {
 	rf.applyCh <- *applyMsg
 	return
 }
-
-/*
-func (rf *Raft) TakeSnapshot(snapshot []byte, lastIncludedIndex int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	// 已经有更大index的snapshot了
-	if lastIncludedIndex <= rf.lastIncludedIndex {
-		return
-	}
-
-	// 要压缩的日志长度
-	compactLogLen := lastIncludedIndex - rf.lastIncludedIndex
-
-	// 更新快照元信息
-	rf.lastIncludedTerm = rf.log[rf.index2LogPos(lastIncludedIndex)].Term
-	rf.lastIncludedIndex = lastIncludedIndex
-
-	// 压缩日志
-	afterLog := make([]Entry, len(rf.log)-compactLogLen)
-	copy(afterLog, rf.log[compactLogLen:])
-	rf.log = afterLog
-
-	rf.persister.SaveStateAndSnapshot(rf.persistDate(), snapshot)
-
-}
-*/
 
 //
 // the service or tester wants to create a Raft server. the ports
