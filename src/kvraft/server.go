@@ -122,12 +122,12 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	defer timer.Stop()
 	select {
 	case <-opCtx.committed: // 如果提交了
-		if opCtx.wrongLeader { // 同样index位置的term不一样了, 说明leader变了，需要client向新leader重新写入
+		if opCtx.wrongLeader { // leader变化
 			reply.Err = ErrWrongLeader
 		} else if !opCtx.keyExist { // key不存在
 			reply.Err = ErrNoKey
 		} else {
-			reply.Value = opCtx.value // 返回值
+			reply.Value = opCtx.value
 		}
 	case <-timer.C: // 超时
 		reply.Err = ErrWrongLeader
