@@ -611,48 +611,6 @@ func (rf *Raft) broadcastHeartBeat() {
 	}
 }
 
-/**
-//发起心跳广播
-func (rf *Raft) broadcastHeartBeat() {
-	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
-		func() {
-			rf.mu.Lock()
-			defer rf.mu.Unlock()
-
-			// 只有leader才能进行heartbeat
-			if rf.state != Leader {
-				return
-			}
-
-			// 广播周期100ms
-			now := time.Now()
-			if now.Sub(rf.lastBroadcastTime) < 100*time.Millisecond {
-				return
-			}
-
-			rf.lastBroadcastTime = time.Now()
-			DPrintf("rf[%v] broadcastHeartBeat", rf.me)
-			// 向所有follower发送心跳
-			for peerId := 0; peerId < len(rf.peers); peerId++ {
-				if peerId == rf.me {
-					continue
-				}
-				// nextIndex在snapshot内，同步snapshot
-				if rf.nextIndex[peerId] <= rf.lastIncludedIndex {
-					rf.doInstallSnapshot(peerId)
-				} else { // 同步日志
-					rf.appendEntries(peerId)
-				}
-			}
-
-			rf.applyLogOnce()
-
-		}()
-	}
-}
-*/
-
 // 发送日志追加
 func (rf *Raft) appendEntries(peerId int) {
 	args := AppendEntriesArgs{
@@ -947,6 +905,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	DPrintf("rf[%v] start wit activetime:%v", rf.me, rf.lastActiveTime)
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
 	return rf
 }
 
