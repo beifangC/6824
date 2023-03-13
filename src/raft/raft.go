@@ -599,7 +599,7 @@ func (rf *Raft) broadcastHeartBeat() {
 				}
 				// nextIndex在snapshot内，同步snapshot
 				if rf.nextIndex[peerId] <= rf.lastIncludedIndex {
-					rf.doInstallSnapshot(peerId)
+					rf.appendSnapshot(peerId)
 				} else { // 同步日志
 					rf.appendEntries(peerId)
 				}
@@ -803,11 +803,11 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	// 将传来的snapshot Data保存到本地
 	rf.persister.SaveStateAndSnapshot(rf.persistDate(), args.Data)
 
-	rf.installSnapshotToApplication()
+	rf.applySnapshot()
 
 }
 
-func (rf *Raft) doInstallSnapshot(peerId int) {
+func (rf *Raft) appendSnapshot(peerId int) {
 	DPrintf("rf[%v] InstallSnapshot starts,perrId[%v]\n", rf.me, peerId)
 
 	args := InstallSnapshotArgs{
@@ -851,7 +851,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	return ok
 }
 
-func (rf *Raft) installSnapshotToApplication() {
+func (rf *Raft) applySnapshot() {
 	//var applyMsg *ApplyMsg
 
 	// 同步给application层的快照
@@ -900,7 +900,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	// make sure install snapshot immediately after restart
-	rf.installSnapshotToApplication()
+	rf.applySnapshot()
 
 	DPrintf("rf[%v] start wit activetime:%v", rf.me, rf.lastActiveTime)
 	// start ticker goroutine to start elections
